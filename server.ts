@@ -1,10 +1,14 @@
 import express, { Request, Response } from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import { processInquiry } from "./src/server/inquiryService.js";
 
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
