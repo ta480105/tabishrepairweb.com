@@ -84,7 +84,7 @@ export async function processInquiry(
   const runtimeEnv = typeof process !== "undefined" ? process.env : {};
   let inquiryId = `inq_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   let dbSaved = false;
-  let supabaseErrorMessage = "";
+  let databaseFailureStatus = 500;
   let emailSent = false;
   let whatsappStatus: "not_configured" | "delivered" | "failed" = "not_configured";
 
@@ -95,15 +95,15 @@ export async function processInquiry(
   );
 
   // 3. Save to Supabase if configured
-  const supabaseUrl = env.SUPABASE_URL || runtimeEnv.SUPABASE_URL;
+  const supabaseUrl = (env.SUPABASE_URL || runtimeEnv.SUPABASE_URL || "").trim();
   // Enquiries are inserted only from the server using a server-side secret.
   // Never fall back to the public anon key: that can fail on INSERT grants/RLS
   // and can make the production configuration appear healthy when it is not.
   const serviceKey =
-    env.SUPABASE_SECRET_KEY ||
-    env.SUPABASE_SERVICE_ROLE_KEY ||
-    runtimeEnv.SUPABASE_SECRET_KEY ||
-    runtimeEnv.SUPABASE_SERVICE_ROLE_KEY;
+    (env.SUPABASE_SECRET_KEY || "").trim() ||
+    (env.SUPABASE_SERVICE_ROLE_KEY || "").trim() ||
+    (runtimeEnv.SUPABASE_SECRET_KEY || "").trim() ||
+    (runtimeEnv.SUPABASE_SERVICE_ROLE_KEY || "").trim();
 
   console.log(
     `[SUPABASE_KEY_CONFIG] Ref: ${inquiryId} | Server key configured: ${Boolean(serviceKey)} | URL configured: ${Boolean(supabaseUrl)}`
@@ -134,29 +134,44 @@ export async function processInquiry(
         .single();
 
       if (error) {
-        supabaseErrorMessage = error.message;
+        // Do not log PostgREST message/details: some database errors can echo submitted values.
         console.error(
-          `[SUPABASE_ERROR] Ref: ${inquiryId} | Code: ${error.code} | Message: ${error.message} | Hint: ${error.hint || "none"}`
+          `[SUPABASE_ERROR] Ref: ${inquiryId} | Code: ${error.code || "unknown"} | HTTP status: ${error.status || "unknown"}`
         );
       } else if (data?.id) {
         inquiryId = data.id;
         dbSaved = true;
         console.log(`[SUPABASE_STATUS] Ref: ${inquiryId} | Saved: true`);
       } else {
-        supabaseErrorMessage = "Insert returned no row ID.";
-        console.error(`[SUPABASE_ERROR] Ref: ${inquiryId} | Insert returned no row ID`);
+        console.error(`[SUPABASE_ERROR] Ref: ${inquiryId} | Code: EMPTY_INSERT_RESPONSE | Insert returned no row ID`);
       }
     } catch (err: any) {
-      supabaseErrorMessage = err?.message || String(err);
-      console.error(
-        `[SUPABASE_ERROR] Ref: ${inquiryId} | Connection Error: ${err?.message || err}`
-      );
+      const errorName = typeof err?.name === "string" ? err.name : "UnknownError";
+      console.error(`[SUPABASE_ERROR] Ref: ${inquiryId} | Connection error type: ${errorName}`);
     }
   } else {
-    supabaseErrorMessage = !supabaseUrl
-      ? "SUPABASE_URL is not configured."
-      : "A server-side SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY is not configured.";
-    console.error(`[SUPABASE_CONFIG_ERROR] Ref: ${inquiryId} | ${supabaseErrorMessage}`);
+    databaseFailureStatus = 503;
+    const missingSetting = !supabaseUrl
+      ? "SUPABASE_URL"
+      : "SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY";
+    console.error(`[SUPABASE_CONFIG_ERROR] Ref: ${inquiryId} | Missing required setting: ${missingSetting}`);
+  }
+
+  // A database failure must stop the pipeline. Do not send notifications for an
+  // enquiry that was not durably stored, and never return a success-shaped result.
+  if (!dbSaved) {
+    return {
+      success: false,
+      statusCode: databaseFailureStatus,
+      inquiryId,
+      message:
+        "Unable to record your enquiry in the database at this time. Please contact us directly on WhatsApp or email so we can take your requirements right away.",
+      details: {
+        dbSaved: false,
+        emailSent: false,
+        whatsappStatus: "not_configured",
+      },
+    };
   }
 
   // 4. Send Email Notification if configured (supports EMAIL_PROVIDER_API_KEY or RESEND_API_KEY)
@@ -253,22 +268,6 @@ export async function processInquiry(
     } catch {
       whatsappStatus = "failed";
     }
-  }
-
-  // If Supabase was configured and database insertion failed, do not return false success
-  if (!dbSaved) {
-    return {
-      success: false,
-      statusCode: 500,
-      inquiryId,
-      message:
-        "Unable to record your enquiry in the database at this time. Please contact us directly on WhatsApp or email so we can take your requirements right away.",
-      details: {
-        dbSaved: false,
-        emailSent,
-        whatsappStatus,
-      },
-    };
   }
 
   return {

@@ -15,8 +15,29 @@ async function startServer() {
   const PORT = parseInt(process.env.PORT || "3000", 10);
   const isProd = process.env.NODE_ENV === "production";
 
-  // Parse JSON bodies
+  // Parse JSON bodies with a bounded request size.
   app.use(express.json({ limit: "1mb" }));
+
+  // Return consistent JSON for malformed JSON and oversized request bodies.
+  app.use((err: any, _req: Request, res: Response, next: (error?: any) => void) => {
+    if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
+      res.status(400).json({
+        success: false,
+        statusCode: 400,
+        message: "Invalid JSON request body.",
+      });
+      return;
+    }
+    if (err?.status === 413) {
+      res.status(413).json({
+        success: false,
+        statusCode: 413,
+        message: "Request body is too large.",
+      });
+      return;
+    }
+    next(err);
+  });
 
   // Security headers
   app.use((_req, res, next) => {
