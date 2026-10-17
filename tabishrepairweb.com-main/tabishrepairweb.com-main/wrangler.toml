@@ -1,0 +1,14 @@
+# Cloudflare Pages / Workers configuration for Tabish Web
+name = "tabish-web"
+compatibility_date = "2024-09-23"
+pages_build_output_dir = "dist"
+
+[vars]
+INQUIRY_TO = "ta480105@gmail.com"
+WHATSAPP_NUMBER = "919507375721"
+
+# Secrets (Set via: npx wrangler secret put <NAME> or Cloudflare Dashboard > Settings > Variables)
+# - SUPABASE_URL
+# - SUPABASE_SECRET_KEY (or SUPABASE_SERVICE_ROLE_KEY)
+# - EMAIL_PROVIDER_API_KEY
+# - WHATSAPP_CLOUD_API_TOKEN (optional)
